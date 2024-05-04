@@ -1,0 +1,94 @@
+// Include files for required libraries
+#include <stdio.h>
+#include <iostream>
+#include "opencv2/core.hpp"
+#include "opencv2/highgui.hpp"
+#include "opencv2/imgproc.hpp"
+
+
+#include "opencv_aee.hpp"
+#include "main.hpp"     // You can use this file for declaring defined values and functions
+#include "pi2c.h"
+
+using namespace cv;
+using namespace std;
+
+Pi2c car(0x22); // Configure the I2C interface to the Car as a global variable
+
+
+int main() {
+    // start raspberry pi camera with dimensions defined
+    setupCamera(320,240);
+
+    while (true) {
+        Mat frame, hsv, mask;
+
+        // capture camera feed frame
+        while (frame.empty())
+            frame = captureFrame();
+
+        // converting camera feed from BGR to HSV
+        cvtColor(frame, hsv, COLOR_BGR2HSV);
+
+        // defining ranges of RGBYK in HSV
+        Scalar lower_black(0, 0, 0);
+        Scalar upper_black(180, 255, 30);
+        
+        Scalar lower_red(170, 100, 20);
+        Scalar upper_red(179, 255, 255);
+        
+        Scalar lower_green(40, 100, 20);
+        Scalar upper_green(85, 255, 255);
+        
+        Scalar lower_blue(90, 100, 20);
+        Scalar upper_blue(125, 255, 255);
+        
+        Scalar lower_yellow(20, 100, 100);
+        Scalar upper_yellow(30, 255, 255);
+
+        // masking the feed to only have the desired colour (lines can be commented out depending on which colour to follow)
+        // in this case the EEEBot will follow the black line
+        inRange(hsv, lower_black, upper_black, mask);
+        //inRange(hsv, lower_red, upper_red, mask);
+        //inRange(hsv, lower_green, upper_green, mask);
+        //inRange(hsv, lower_blue, upper_blue, mask);
+        //inRange(hsv, lower_yellow, upper_yellow, mask);
+
+        Mat croppedFeed;
+        croppedFeed = mask(Rect(0,0,319,1)); // cropping the masked feed so the camera only sees the first row
+
+        float sumOfWeights = 0;
+        float weightedSum = 0;
+        
+        // calculating the weighted average
+        for (int col=0; col<croppedFeed.cols; ++col) {
+            uchar pixel = croppedFeed.at<uchar>(0,col);
+            float X = col - 160; // 320 columns so need to subtract 160 to find centre
+            float weight = static_cast<float>(pixel);
+            sumOfWeights += weight;
+            weightedSum += static_cast<float>(pixel) * static_cast<float>(X);
+        }
+        int weightedAverage = weightedSum / sumOfWeights;
+        printf(" Weighted Average: %d ",weightedAverage);
+    
+        char Xpk[2]; // defining a charred array to send weighted average over I2C to arduino IDE
+        Xpk[0] = (weightedAverage >> 8) & 0xFF;
+        Xpk[1] = weightedAverage & 0xFF;
+        car.i2cWrite(Xpk, 2);
+
+        imshow("Original Feed", frame); // display original camera feed
+        imshow("Masked Feed", mask); // display masked feed
+        imshow("Cropped Feed", croppedFeed); // display cropped feed
+
+        int key = waitKey(1);   // Wait 1ms for a keypress (required to update windows)
+
+        key = (key==255) ? -1 : key;    // Check if the ESC key has been pressed
+        if (key == 27) {
+            break;
+        }
+    }
+
+    closeCV();
+
+    return 0;
+}
